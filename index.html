@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>3D Tank Wireframe (Elite 1984 Style)</title>
+<style>
+    body { margin: 0; background: black; overflow: hidden; }
+    canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let keys = {};
+document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+let mouseX = 0;
+document.addEventListener("mousemove", e => mouseX = e.clientX);
+
+function project([x, y, z]) {
+    const f = 200 / (z + 400);
+    return [x * f + canvas.width / 2, -y * f + canvas.height / 2];
+}
+
+// ---------- TANK SHAPE (wireframe) ----------
+const tank = [
+    [-20,0,-30], [20,0,-30],
+    [20,0,30], [-20,0,30],
+
+    [-20,20,-30], [20,20,-30],
+    [20,20,30], [-20,20,30],
+];
+
+// TANK EDGES (pairs)
+const edges = [
+    [0,1],[1,2],[2,3],[3,0],
+    [4,5],[5,6],[6,7],[7,4],
+    [0,4],[1,5],[2,6],[3,7]
+];
+
+// ---------- PLAYER ----------
+let px = 0, py = 0, pz = 0;
+let prot = 0;
+let turretRot = 0;
+
+// ---------- BULLETS ----------
+let bullets = [];
+
+function rotateY([x,y,z], a){
+    let s = Math.sin(a), c = Math.cos(a);
+    return [x*c - z*s, y, x*s + z*c];
+}
+
+function drawTank() {
+    let rotated = tank.map(v => rotateY(v, prot));
+    let moved = rotated.map(([x,y,z]) => [x+px, y+py, z+pz]);
+    let projected = moved.map(project);
+
+    ctx.strokeStyle = "white";
+    ctx.beginPath();
+    for (let [a,b] of edges) {
+        let p1 = projected[a], p2 = projected[b];
+        ctx.moveTo(p1[0], p1[1]);
+        ctx.lineTo(p2[0], p2[1]);
+    }
+    ctx.stroke();
+
+    // turret direction line
+    let front = rotateY([0,0,-50], turretRot);
+    front = project([front[0]+px, front[1]+py, front[2]+pz]);
+
+    let center = project([px, py+10, pz]);
+    ctx.beginPath();
+    ctx.moveTo(center[0], center[1]);
+    ctx.lineTo(front[0], front[1]);
+    ctx.stroke();
+}
+
+function update(dt) {
+    // movement
+    if (keys["w"]) {
+        px -= Math.sin(prot) * 100 * dt;
+        pz -= Math.cos(prot) * 100 * dt;
+    }
+    if (keys["s"]) {
+        px += Math.sin(prot) * 100 * dt;
+        pz += Math.cos(prot) * 100 * dt;
+    }
+    if (keys["a"]) prot += 2 * dt;
+    if (keys["d"]) prot -= 2 * dt;
+
+    // turret follows mouse
+    let target = (mouseX - canvas.width / 2) / 200;
+    turretRot = prot + target;
+
+    // shooting
+    if (keys[" "]) {
+        bullets.push({
+            x: px,
+            y: py + 10,
+            z: pz,
+            rot: turretRot
+        });
+        keys[" "] = false;
+    }
+
+    // update bullets
+    for (let b of bullets) {
+        b.x -= Math.sin(b.rot) * 300 * dt;
+        b.z -= Math.cos(b.rot) * 300 * dt;
+    }
+
+    bullets = bullets.filter(b => Math.abs(b.x)<2000 && Math.abs(b.z)<2000);
+}
+
+function drawBullets() {
+    ctx.strokeStyle = "white";
+    for (let b of bullets) {
+        let p = project([b.x, b.y, b.z]);
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], 2, 0, Math.PI*2);
+        ctx.stroke();
+    }
+}
+
+let last = performance.now();
+function loop(now) {
+    let dt = (now - last) / 1000;
+    last = now;
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    update(dt);
+    drawTank();
+    drawBullets();
+
+    requestAnimationFrame(loop);
+}
+loop();
+
+</script>
+</body>
+</html>
