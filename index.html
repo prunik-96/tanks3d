@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>3D Tank Wireframe (Elite 1984 Style)</title>
+<title>3D Tank Wireframe — Smooth</title>
 <style>
     body { margin: 0; background: black; overflow: hidden; }
     canvas { display: block; }
@@ -15,8 +15,8 @@
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+canvas.width = innerWidth;
+canvas.height = innerHeight;
 
 let keys = {};
 document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
@@ -25,21 +25,30 @@ document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
 let mouseX = 0;
 document.addEventListener("mousemove", e => mouseX = e.clientX);
 
-function project([x, y, z]) {
-    const f = 200 / (z + 400);
-    return [x * f + canvas.width / 2, -y * f + canvas.height / 2];
+// ---------- Fixed update timer ----------
+const FIXED_DELTA = 1/60;    // 60 FPS physics
+let accumulator = 0;
+let lastTime = performance.now();
+
+// ---------- MATH ----------
+function project([x,y,z]) {
+    const f = 250 / (z + 800);
+    return [x*f + canvas.width/2, -y*f + canvas.height/2];
 }
 
-// ---------- TANK SHAPE (wireframe) ----------
-const tank = [
-    [-20,0,-30], [20,0,-30],
-    [20,0,30], [-20,0,30],
+function rotateY([x,y,z], a){
+    let s = Math.sin(a), c = Math.cos(a);
+    return [x*c - z*s, y, x*s + z*c];
+}
 
-    [-20,20,-30], [20,20,-30],
-    [20,20,30], [-20,20,30],
+// ---------- TANK MODEL (wireframe cube) ----------
+const model = [
+    [-20,0,-30],[20,0,-30],
+    [20,0,30],[-20,0,30],
+
+    [-20,20,-30],[20,20,-30],
+    [20,20,30],[-20,20,30]
 ];
-
-// TANK EDGES (pairs)
 const edges = [
     [0,1],[1,2],[2,3],[3,0],
     [4,5],[5,6],[6,7],[7,4],
@@ -47,24 +56,82 @@ const edges = [
 ];
 
 // ---------- PLAYER ----------
-let px = 0, py = 0, pz = 0;
-let prot = 0;
-let turretRot = 0;
+let px=0, pz=0;
+let rot=0;
 
-// ---------- BULLETS ----------
+let velocity = 0;
+let accel = 0;
+const maxSpeed = 90;
+const accelRate = 120;
+const friction = 60;
+
+// turret
+let turretAngle = 0;
+
+// bullets
 let bullets = [];
 
-function rotateY([x,y,z], a){
-    let s = Math.sin(a), c = Math.cos(a);
-    return [x*c - z*s, y, x*s + z*c];
+// ---------- FIXED UPDATE ----------
+function fixedUpdate() {
+    // smooth forward accel
+    if (keys["w"]) accel = 1;
+    else if (keys["s"]) accel = -1;
+    else accel = 0;
+
+    velocity += accel * accelRate * FIXED_DELTA;
+
+    // friction
+    if (accel === 0) {
+        if (velocity > 0) velocity -= friction * FIXED_DELTA;
+        if (velocity < 0) velocity += friction * FIXED_DELTA;
+        if (Math.abs(velocity) < 0.1) velocity = 0;
+    }
+
+    // clamp
+    velocity = Math.max(-maxSpeed, Math.min(maxSpeed, velocity));
+
+    // movement
+    px -= Math.sin(rot) * velocity * FIXED_DELTA;
+    pz -= Math.cos(rot) * velocity * FIXED_DELTA;
+
+    // rotation
+    if (keys["a"]) rot += 2.2 * FIXED_DELTA;
+    if (keys["d"]) rot -= 2.2 * FIXED_DELTA;
+
+    // turret follows mouse — smoothly
+    let target = rot + (mouseX - canvas.width/2) / 600;
+    turretAngle += (target - turretAngle) * 0.15;
+
+    // shoot
+    if (keys[" "]) {
+        bullets.push({
+            x: px,
+            y: 10,
+            z: pz,
+            angle: turretAngle,
+        });
+        keys[" "] = false;
+    }
+
+    // update bullets
+    for (let b of bullets) {
+        b.x -= Math.sin(b.angle) * 240 * FIXED_DELTA;
+        b.z -= Math.cos(b.angle) * 240 * FIXED_DELTA;
+    }
+
+    bullets = bullets.filter(b => Math.abs(b.x)<2000 && Math.abs(b.z)<2000);
 }
 
-function drawTank() {
-    let rotated = tank.map(v => rotateY(v, prot));
-    let moved = rotated.map(([x,y,z]) => [x+px, y+py, z+pz]);
-    let projected = moved.map(project);
-
+// ---------- RENDER ----------
+function render() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
     ctx.strokeStyle = "white";
+
+    // draw tank
+    let transformed = model.map(v => rotateY(v, rot));
+    transformed = transformed.map(([x,y,z]) => [x+px, y, z+pz]);
+    let projected = transformed.map(project);
+
     ctx.beginPath();
     for (let [a,b] of edges) {
         let p1 = projected[a], p2 = projected[b];
@@ -73,79 +140,40 @@ function drawTank() {
     }
     ctx.stroke();
 
-    // turret direction line
-    let front = rotateY([0,0,-50], turretRot);
-    front = project([front[0]+px, front[1]+py, front[2]+pz]);
-
-    let center = project([px, py+10, pz]);
+    // turret line
+    let t = rotateY([0,10,-60], turretAngle);
+    let tp = project([t[0]+px, t[1], t[2]+pz]);
+    let center = project([px,10,pz]);
     ctx.beginPath();
     ctx.moveTo(center[0], center[1]);
-    ctx.lineTo(front[0], front[1]);
+    ctx.lineTo(tp[0], tp[1]);
     ctx.stroke();
-}
 
-function update(dt) {
-    // movement
-    if (keys["w"]) {
-        px -= Math.sin(prot) * 100 * dt;
-        pz -= Math.cos(prot) * 100 * dt;
-    }
-    if (keys["s"]) {
-        px += Math.sin(prot) * 100 * dt;
-        pz += Math.cos(prot) * 100 * dt;
-    }
-    if (keys["a"]) prot += 2 * dt;
-    if (keys["d"]) prot -= 2 * dt;
-
-    // turret follows mouse
-    let target = (mouseX - canvas.width / 2) / 200;
-    turretRot = prot + target;
-
-    // shooting
-    if (keys[" "]) {
-        bullets.push({
-            x: px,
-            y: py + 10,
-            z: pz,
-            rot: turretRot
-        });
-        keys[" "] = false;
-    }
-
-    // update bullets
+    // bullets
     for (let b of bullets) {
-        b.x -= Math.sin(b.rot) * 300 * dt;
-        b.z -= Math.cos(b.rot) * 300 * dt;
-    }
-
-    bullets = bullets.filter(b => Math.abs(b.x)<2000 && Math.abs(b.z)<2000);
-}
-
-function drawBullets() {
-    ctx.strokeStyle = "white";
-    for (let b of bullets) {
-        let p = project([b.x, b.y, b.z]);
+        let p = project([b.x,b.y,b.z]);
         ctx.beginPath();
         ctx.arc(p[0], p[1], 2, 0, Math.PI*2);
         ctx.stroke();
     }
 }
 
-let last = performance.now();
-function loop(now) {
-    let dt = (now - last) / 1000;
-    last = now;
+// ---------- MAIN LOOP ----------
+function frame(now) {
+    let dt = (now - lastTime) / 1000;
+    if (dt > 0.2) dt = 0.2;
+    lastTime = now;
 
-    ctx.clearRect(0,0,canvas.width,canvas.height);
+    accumulator += dt;
+    while (accumulator >= FIXED_DELTA) {
+        fixedUpdate();
+        accumulator -= FIXED_DELTA;
+    }
 
-    update(dt);
-    drawTank();
-    drawBullets();
-
-    requestAnimationFrame(loop);
+    render();
+    requestAnimationFrame(frame);
 }
-loop();
-
+requestAnimationFrame(frame);
 </script>
 </body>
 </html>
